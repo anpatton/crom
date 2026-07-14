@@ -16,23 +16,35 @@ PROJECTION_SYSTEMS <- c("steamer", "zips", "thebat")
 
 # Raw field names to pull from FanGraphs per player_type (before averaging).
 FG_PROJECTION_STAT_COLS <- list(
-  hitting  = c("AB", "H", "R", "RBI", "SB", "CS", "OBP", "SLG"),
+  hitting = c("AB", "H", "R", "RBI", "SB", "CS", "OBP", "SLG"),
   pitching = c("IP", "ERA", "WHIP", "SO", "W", "SV", "HLD")
 )
 
 # Pulls one system's full-season projection leaderboard for one player_type.
-fetch_fg_projections_one <- function(system, player_type = c("hitting", "pitching")) {
+fetch_fg_projections_one <- function(
+  system,
+  player_type = c("hitting", "pitching")
+) {
   player_type <- match.arg(player_type)
   stat_cols <- FG_PROJECTION_STAT_COLS[[player_type]]
 
   url <- httr::modify_url(
     "https://www.fangraphs.com/api/projections",
-    query = list(type = system, stats = if (player_type == "hitting") "bat" else "pit",
-                 pos = "all", team = "0", players = "0", lg = "all")
+    query = list(
+      type = system,
+      stats = if (player_type == "hitting") "bat" else "pit",
+      pos = "all",
+      team = "0",
+      players = "0",
+      lg = "all"
+    )
   )
   resp <- httr::RETRY("GET", url, times = 3, quiet = TRUE)
   raw <- jsonlite::fromJSON(rawToChar(resp$content), flatten = TRUE)
-  as_tibble(raw)[, intersect(c("PlayerName", "xMLBAMID", "playerid", stat_cols), names(raw))]
+  as_tibble(raw)[, intersect(
+    c("PlayerName", "xMLBAMID", "playerid", stat_cols),
+    names(raw)
+  )]
 }
 
 # Pulls all PROJECTION_SYSTEMS for a player_type and averages each stat
@@ -57,23 +69,15 @@ fetch_fg_projections <- function(player_type = c("hitting", "pitching")) {
     rename_with(~ paste0("proj_", .x), all_of(stat_cols))
 }
 
-# Disk cache wrapper, mirroring fetch_fg_leaders_cached -- one file per
-# player_type per calendar day (preseason projections barely move day to
-# day, but this keeps the caching story consistent with the season stats).
-FG_PROJ_CACHE_DIR <- "cache"
-
-fetch_fg_projections_cached <- function(player_type, force_refresh = FALSE,
-                                         cache_dir = FG_PROJ_CACHE_DIR) {
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-  cache_file <- file.path(cache_dir, sprintf("proj_%s_%s.rds", player_type, Sys.Date()))
-
-  if (!force_refresh && file.exists(cache_file)) {
-    return(readRDS(cache_file))
+# Reader for the bundled preseason-projection snapshot (see DATA_DIR /
+# data_refresh.R). Returns NULL if the file is absent -- the ranking layer
+# treats a NULL proj_df as "no projections available".
+read_fg_projections <- function(player_type, data_dir = DATA_DIR) {
+  f <- file.path(data_dir, sprintf("proj_%s.rds", player_type))
+  if (!file.exists(f)) {
+    return(NULL)
   }
-
-  df <- fetch_fg_projections(player_type)
-  saveRDS(df, cache_file)
-  df
+  readRDS(f)
 }
 
 # FanGraphs rest-of-season projections ------------------------------------------
@@ -81,20 +85,36 @@ fetch_fg_projections_cached <- function(player_type, force_refresh = FALSE,
 # rest-of-season line under its own (inconsistently named) `type` code rather
 # than a shared suffix/prefix convention -- confirmed against the live API:
 # Steamer's ROS line is "steamerr", ZiPS' is "rzips", THE BAT's is "rthebat".
-PROJECTION_SYSTEMS_ROS <- c(steamer = "steamerr", zips = "rzips", thebat = "rthebat")
+PROJECTION_SYSTEMS_ROS <- c(
+  steamer = "steamerr",
+  zips = "rzips",
+  thebat = "rthebat"
+)
 
-fetch_fg_ros_projections_one <- function(system_type, player_type = c("hitting", "pitching")) {
+fetch_fg_ros_projections_one <- function(
+  system_type,
+  player_type = c("hitting", "pitching")
+) {
   player_type <- match.arg(player_type)
   stat_cols <- FG_PROJECTION_STAT_COLS[[player_type]]
 
   url <- httr::modify_url(
     "https://www.fangraphs.com/api/projections",
-    query = list(type = system_type, stats = if (player_type == "hitting") "bat" else "pit",
-                 pos = "all", team = "0", players = "0", lg = "all")
+    query = list(
+      type = system_type,
+      stats = if (player_type == "hitting") "bat" else "pit",
+      pos = "all",
+      team = "0",
+      players = "0",
+      lg = "all"
+    )
   )
   resp <- httr::RETRY("GET", url, times = 3, quiet = TRUE)
   raw <- jsonlite::fromJSON(rawToChar(resp$content), flatten = TRUE)
-  as_tibble(raw)[, intersect(c("PlayerName", "xMLBAMID", "playerid", stat_cols), names(raw))]
+  as_tibble(raw)[, intersect(
+    c("PlayerName", "xMLBAMID", "playerid", stat_cols),
+    names(raw)
+  )]
 }
 
 # Pulls all 3 systems' ROS lines for a player_type and averages each stat
@@ -120,21 +140,12 @@ fetch_fg_ros_projections <- function(player_type = c("hitting", "pitching")) {
     rename_with(~ paste0("rosproj_", .x), all_of(stat_cols))
 }
 
-# Disk cache wrapper, mirroring fetch_fg_projections_cached -- ROS lines move
-# daily (unlike preseason projections) as games are played, so this still
-# only saves repeat pulls within the same calendar day.
-FG_ROS_PROJ_CACHE_DIR <- "cache"
-
-fetch_fg_ros_projections_cached <- function(player_type, force_refresh = FALSE,
-                                             cache_dir = FG_ROS_PROJ_CACHE_DIR) {
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-  cache_file <- file.path(cache_dir, sprintf("rosproj_%s_%s.rds", player_type, Sys.Date()))
-
-  if (!force_refresh && file.exists(cache_file)) {
-    return(readRDS(cache_file))
+# Reader for the bundled rest-of-season-projection snapshot. Returns NULL if
+# the file is absent (ranking layer treats a NULL ros_proj_df as "none").
+read_fg_ros_projections <- function(player_type, data_dir = DATA_DIR) {
+  f <- file.path(data_dir, sprintf("rosproj_%s.rds", player_type))
+  if (!file.exists(f)) {
+    return(NULL)
   }
-
-  df <- fetch_fg_ros_projections(player_type)
-  saveRDS(df, cache_file)
-  df
+  readRDS(f)
 }

@@ -24,17 +24,56 @@ suppressPackageStartupMessages({
 # directly and keeping only the columns rank_pitchers()/add_projection_score
 # actually use.
 fetch_fg_pitcher_leaders_rolling <- function(season, startdate, enddate) {
-  params <- list(age = "", pos = "all", stats = "pit", lg = "all", qual = "0",
-                  season = season, season1 = season, startdate = startdate, enddate = enddate,
-                  month = "1000", hand = "", team = "0", pageitems = "10000", pagenum = "1",
-                  ind = "0", rost = "0", players = "", type = "8", postseason = "",
-                  sortdir = "default", sortstat = "WAR")
-  url <- httr::modify_url("https://www.fangraphs.com/api/leaders/major-league/data", query = params)
+  params <- list(
+    age = "",
+    pos = "all",
+    stats = "pit",
+    lg = "all",
+    qual = "0",
+    season = season,
+    season1 = season,
+    startdate = startdate,
+    enddate = enddate,
+    month = "1000",
+    hand = "",
+    team = "0",
+    pageitems = "10000",
+    pagenum = "1",
+    ind = "0",
+    rost = "0",
+    players = "",
+    type = "8",
+    postseason = "",
+    sortdir = "default",
+    sortstat = "WAR"
+  )
+  url <- httr::modify_url(
+    "https://www.fangraphs.com/api/leaders/major-league/data",
+    query = params
+  )
   resp <- httr::RETRY("GET", url, times = 3, quiet = TRUE)
   raw <- jsonlite::fromJSON(rawToChar(resp$content), flatten = TRUE)
 
-  needed <- c("PlayerName", "xMLBAMID", "TeamName", "IP", "ER", "H", "BB", "ERA", "WHIP",
-              "SO", "W", "SV", "HLD", "FIP", "WAR", "xFIP", "xERA", "SIERA")
+  needed <- c(
+    "PlayerName",
+    "xMLBAMID",
+    "TeamName",
+    "IP",
+    "ER",
+    "H",
+    "BB",
+    "ERA",
+    "WHIP",
+    "SO",
+    "W",
+    "SV",
+    "HLD",
+    "FIP",
+    "WAR",
+    "xFIP",
+    "xERA",
+    "SIERA"
+  )
   as_tibble(raw$data)[, intersect(needed, names(raw$data))] |>
     rename(team_name = "TeamName")
 }
@@ -48,52 +87,70 @@ fetch_fg_pitcher_leaders_rolling <- function(season, startdate, enddate) {
 #
 # Returns the raw baseballr tibble (qual = "0" -> everyone; filtering by
 # playing time happens in the ranking step).
-fetch_fg_leaders <- function(player_type = c("hitting", "pitching"),
-                             season      = as.integer(format(Sys.Date(), "%Y")),
-                             window      = c("season", "rolling"),
-                             last_n      = 15,
-                             as_of       = Sys.Date()) {
+fetch_fg_leaders <- function(
+  player_type = c("hitting", "pitching"),
+  season = as.integer(format(Sys.Date(), "%Y")),
+  window = c("season", "rolling"),
+  last_n = 15,
+  as_of = Sys.Date()
+) {
   player_type <- match.arg(player_type)
-  window      <- match.arg(window)
+  window <- match.arg(window)
 
   if (player_type == "pitching" && window == "rolling") {
     return(fetch_fg_pitcher_leaders_rolling(
-      season, as.character(as_of - last_n), as.character(as_of)
+      season,
+      as.character(as_of - last_n),
+      as.character(as_of)
     ))
   }
 
   args <- list(startseason = season, endseason = season, qual = "0")
   if (window == "rolling") {
     args$startdate <- as.character(as_of - last_n)
-    args$enddate   <- as.character(as_of)
-    args$month     <- "1000"                # custom date-range flag
+    args$enddate <- as.character(as_of)
+    args$month <- "1000" # custom date-range flag
   }
 
   fn <- if (player_type == "hitting") fg_batter_leaders else fg_pitcher_leaders
   do.call(fn, args)
 }
 
-# Disk cache wrapper around fetch_fg_leaders. One file per player_type per
-# window per calendar day; reused across sessions/instances sharing the
-# app's filesystem until the day rolls over or a refresh forces a re-pull.
-# `window` is one of the app's toggle values: "season", "15", "30", "60".
-FG_CACHE_DIR <- "cache"
+# Static daily snapshot layer -------------------------------------------------
+# Data is no longer pulled live from the app. An offline job (data_refresh.R,
+# run by cron at 7am ET) fetches every combination and writes it to DATA_DIR
+# under a stable, date-free filename that ships bundled with the app. The app
+# only ever reads these files.
+DATA_DIR <- "data"
 
-fetch_fg_leaders_cached <- function(player_type, window = "season", force_refresh = FALSE,
-                                     cache_dir = FG_CACHE_DIR) {
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-  tag <- if (window == "season") "season" else paste0("L", window)
-  cache_file <- file.path(cache_dir, sprintf("%s_%s_%s.rds", player_type, tag, Sys.Date()))
+# Filename tag for a leaderboard window: "season", "15" -> "L15", etc.
+leaders_tag <- function(window) {
+  if (window == "season") "season" else paste0("L", window)
+}
 
-  if (!force_refresh && file.exists(cache_file)) {
-    return(readRDS(cache_file))
+leaders_file <- function(player_type, window, data_dir = DATA_DIR) {
+  file.path(data_dir, sprintf("%s_%s.rds", player_type, leaders_tag(window)))
+}
+
+# Reader used by the app. Returns the bundled snapshot for one player_type /
+# window, or NULL (with an `err` attribute) if the file is missing.
+read_fg_leaders <- function(
+  player_type,
+  window = "season",
+  data_dir = DATA_DIR
+) {
+  f <- leaders_file(player_type, window, data_dir)
+  if (!file.exists(f)) {
+    return(structure(NULL, err = sprintf("Data file not found: %s", f)))
   }
+  readRDS(f)
+}
 
-  df <- if (window == "season") {
-    fetch_fg_leaders(player_type = player_type, window = "season")
-  } else {
-    fetch_fg_leaders(player_type = player_type, window = "rolling", last_n = as.integer(window))
+# Snapshot metadata (list with `generated_at`), written by data_refresh.R.
+read_snapshot_meta <- function(data_dir = DATA_DIR) {
+  f <- file.path(data_dir, "meta.rds")
+  if (!file.exists(f)) {
+    return(NULL)
   }
-  saveRDS(df, cache_file)
-  df
+  readRDS(f)
 }

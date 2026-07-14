@@ -9,21 +9,23 @@
 #     x, Diff, Pct) shares one 70s-inspired hue -- CATEGORY_COLORS below.
 
 PADRES_BROWN <- "#4A3226"
-PADRES_GOLD  <- "#F2B705"
-LIGHT_GRAY   <- "#D9D9D9"
-NEUTRAL_MID  <- "#FFFFFF"
+PADRES_GOLD <- "#F2B705"
+LIGHT_GRAY <- "#D9D9D9"
+NEUTRAL_MID <- "#FFFFFF"
 N_SHADES <- 9
-MUTED_GRAY   <- "#E0E0E0"
-MUTED_TEXT   <- "#999999"
+MUTED_GRAY <- "#E0E0E0"
+MUTED_TEXT <- "#999999"
 
-# Preseason-projection-sourced columns -- the actual stats they'd compare
-# against are now always a rolling L15/L30/L60 window (see
-# fetch_fg_leaders_cached), not a full season, so these are flagged as
-# less directly comparable and grayed out instead of heatmapped in
-# score_datatable(): the per-category "x" group (z_<cat>_x, e.g. xAB) plus
-# the xCROM / xCROM_ROS composite scores.
-is_muted_col <- function(col) {
-  score_col_group(col) == "proj" || col %in% c("xCROM", "xCROM_ROS")
+# Preseason-projection-sourced columns: the per-category "x" group
+# (z_<cat>_x, e.g. xAB) plus the xCROM / xCROM_ROS composite scores. These
+# are grayed out instead of heatmapped only when the actual stats they'd
+# compare against are a rolling L15/L30/L60 window -- against those, a
+# full-season projection is not directly comparable. When the Full Season
+# window is selected the projections line up, so `mute_proj` is FALSE and
+# they heatmap like any other column.
+is_muted_col <- function(col, mute_proj = TRUE) {
+  mute_proj &&
+    (score_col_group(col) == "proj" || col %in% c("xCROM", "xCROM_ROS"))
 }
 
 # One 70s-inspired hue per category -- shared by every column in that
@@ -33,17 +35,35 @@ is_muted_col <- function(col) {
 # handled separately in score_datatable() and isn't in this map.
 CATEGORY_COLORS <- c(
   # Hitting core
-  AB  = "#D4A017", H   = "#CC5500", R    = "#6B8E23", RBI = "#B7410E",
-  SBN = "#1D5C63", OBP = "#E1AD01", SLG  = "#CB6D51",
+  AB = "#D4A017",
+  H = "#CC5500",
+  R = "#6B8E23",
+  RBI = "#B7410E",
+  SBN = "#1D5C63",
+  OBP = "#E1AD01",
+  SLG = "#CB6D51",
   # Pitching core
-  IP  = "#D4A017", ERA = "#CC5500", WHIP = "#6B8E23", K   = "#B7410E",
-  W   = "#1D5C63", SVH = "#E1AD01",
+  IP = "#D4A017",
+  ERA = "#CC5500",
+  WHIP = "#6B8E23",
+  K = "#B7410E",
+  W = "#1D5C63",
+  SVH = "#E1AD01",
   # Composite scores
-  CROM = "#6B6B3A", xCROM = "#6B3A4B", xCROM_ROS = "#3A5C6B", diffCROM = "#2F6F6A",
+  CROM = "#6B6B3A",
+  xCROM = "#6B3A4B",
+  xCROM_ROS = "#3A5C6B",
+  diffCROM = "#2F6F6A",
   # Supplemental sabermetrics (hitting + pitching)
-  xwOBA = "#B87333", wRCplus = "#DAA520", WAR = "#A0522D",
-  xAVG  = "#C08081", xSLG    = "#8A9A5B",
-  FIP   = "#B87333", xFIP    = "#A0522D", xERA = "#C08081", SIERA = "#8A9A5B"
+  xwOBA = "#B87333",
+  wRCplus = "#DAA520",
+  WAR = "#A0522D",
+  xAVG = "#C08081",
+  xSLG = "#8A9A5B",
+  FIP = "#B87333",
+  xFIP = "#A0522D",
+  xERA = "#C08081",
+  SIERA = "#8A9A5B"
 )
 
 # Boosts a hex color's HSV brightness (and saturation slightly) so the top
@@ -63,11 +83,15 @@ brighten_color <- function(hex, amount = 0.18) {
 # falls on one side of zero, only that side's ramp is used.
 diverging_color_at <- function(v, rng, low, mid, high) {
   if (v <= 0) {
-    if (rng[1] >= 0) return(mid)
+    if (rng[1] >= 0) {
+      return(mid)
+    }
     frac <- (v - rng[1]) / (0 - rng[1])
     grDevices::colorRampPalette(c(low, mid))(101)[[round(frac * 100) + 1]]
   } else {
-    if (rng[2] <= 0) return(mid)
+    if (rng[2] <= 0) {
+      return(mid)
+    }
     frac <- v / rng[2]
     grDevices::colorRampPalette(c(mid, high))(101)[[round(frac * 100) + 1]]
   }
@@ -78,11 +102,25 @@ diverging_color_at <- function(v, rng, low, mid, high) {
 diverging_colors <- function(rng, low, mid, high, n = N_SHADES) {
   cuts <- seq(rng[1], rng[2], length.out = n + 1)
   bin_mids <- (cuts[-1] + cuts[-(n + 1)]) / 2
-  vapply(bin_mids, diverging_color_at, character(1), rng = rng, low = low, mid = mid, high = high)
+  vapply(
+    bin_mids,
+    diverging_color_at,
+    character(1),
+    rng = rng,
+    low = low,
+    mid = mid,
+    high = high
+  )
 }
 
 # Returns a DT::styleInterval() background-color scale sized to x's range.
-zscore_style <- function(x, low = LIGHT_GRAY, high = PADRES_GOLD, mid = NEUTRAL_MID, n = N_SHADES) {
+zscore_style <- function(
+  x,
+  low = LIGHT_GRAY,
+  high = PADRES_GOLD,
+  mid = NEUTRAL_MID,
+  n = N_SHADES
+) {
   # suppressWarnings: see scale_score()'s comment -- an all-NA column is an
   # anticipated case, handled by the is.finite() check right below.
   rng <- suppressWarnings(range(x, na.rm = TRUE))
@@ -112,8 +150,8 @@ category_boundary_cols <- function(cols) {
 # the first "real data" columns after the identity columns (Rank, Headshot,
 # Player, Team). Per-category z-score columns aren't tooltipped.
 COLUMN_TOOLTIPS <- c(
-  CROM      = "Based on stats that have actually occurred in games this season: sum of per-category z-scores, rescaled -5 (worst in pool) to +5 (best in pool).",
-  xCROM     = "Same as CROM, but computed from preseason projections (avg of Steamer/ZiPS/THE BAT) instead of actual in-game stats.",
+  CROM = "Based on stats that have actually occurred in games this season: sum of per-category z-scores, rescaled -5 (worst in pool) to +5 (best in pool).",
+  xCROM = "Same as CROM, but computed from preseason projections (avg of Steamer/ZiPS/THE BAT) instead of actual in-game stats.",
   xCROM_ROS = "Same as CROM, but computed from each system's rest-of-season projection (avg of Steamer/ZiPS/THE BAT ROS lines) instead of actual in-game stats."
 )
 
@@ -122,19 +160,19 @@ COLUMN_TOOLTIPS <- c(
 # score_col_category() -- unique across hitting and pitching, so one flat
 # lookup covers both.
 CATEGORY_FULL_NAMES <- c(
-  AB   = "At Bats",
-  H    = "Hits",
-  R    = "Runs",
-  RBI  = "Runs Batted In",
-  SBN  = "Net Steals (SB-CS)",
-  OBP  = "On-Base Pct",
-  SLG  = "Slugging Pct",
-  IP   = "Innings Pitched",
-  ERA  = "Earned Run Avg",
+  AB = "At Bats",
+  H = "Hits",
+  R = "Runs",
+  RBI = "Runs Batted In",
+  SBN = "Net Steals (SB-CS)",
+  OBP = "On-Base Pct",
+  SLG = "Slugging Pct",
+  IP = "Innings Pitched",
+  ERA = "Earned Run Avg",
   WHIP = "Walks+Hits/IP",
-  K    = "Strikeouts",
-  W    = "Wins",
-  SVH  = "Saves+Holds"
+  K = "Strikeouts",
+  W = "Wins",
+  SVH = "Saves+Holds"
 )
 
 # Builds a 2-row <thead> for DT::datatable(container = ...): row 1 groups
@@ -156,12 +194,23 @@ grouped_header_sketch <- function(cols, headers, tooltips = NULL) {
     idx <- i:(i + len - 1)
     if (len > 1) {
       full_name <- CATEGORY_FULL_NAMES[[runs$values[j]]] %||% runs$values[j]
-      top_row[[length(top_row) + 1]] <- htmltools::tags$th(colspan = len, full_name)
-      for (k in idx) bottom_row[[length(bottom_row) + 1]] <- htmltools::tags$th(headers[k])
+      top_row[[length(top_row) + 1]] <- htmltools::tags$th(
+        colspan = len,
+        full_name
+      )
+      for (k in idx) {
+        bottom_row[[length(bottom_row) + 1]] <- htmltools::tags$th(headers[k])
+      }
     } else {
-      tip <- if (is.null(tooltips)) NA_character_ else unname(tooltips[cols[idx]])
+      tip <- if (is.null(tooltips)) {
+        NA_character_
+      } else {
+        unname(tooltips[cols[idx]])
+      }
       th_args <- list(rowspan = 2, headers[idx])
-      if (!is.na(tip)) th_args$title <- tip
+      if (!is.na(tip)) {
+        th_args$title <- tip
+      }
       top_row[[length(top_row) + 1]] <- do.call(htmltools::tags$th, th_args)
     }
     i <- i + len
@@ -181,9 +230,18 @@ grouped_header_sketch <- function(cols, headers, tooltips = NULL) {
 # "_Diff" shown as the delta symbol (e.g. z_AB_Diff -> "ABΔ"). A bold
 # vertical rule marks the start of each stat category's column group.
 # Shared by the Players and Advanced Stats tabs so both style identically.
-score_datatable <- function(df, score_cols, order_col = NULL) {
-  opts <- list(pageLength = 25, dom = "tip", scrollX = TRUE,
-               columnDefs = list(list(className = "dt-center", targets = "_all")))
+score_datatable <- function(
+  df,
+  score_cols,
+  order_col = NULL,
+  mute_proj = TRUE
+) {
+  opts <- list(
+    pageLength = 25,
+    dom = "tip",
+    scrollX = TRUE,
+    columnDefs = list(list(className = "dt-center", targets = "_all"))
+  )
   if (!is.null(order_col)) {
     opts$order <- list(list(which(names(df) == order_col) - 1, "desc"))
   }
@@ -199,7 +257,11 @@ score_datatable <- function(df, score_cols, order_col = NULL) {
   dt <- DT::datatable(
     df,
     rownames = FALSE,
-    container = grouped_header_sketch(names(df), headers, tooltips = COLUMN_TOOLTIPS),
+    container = grouped_header_sketch(
+      names(df),
+      headers,
+      tooltips = COLUMN_TOOLTIPS
+    ),
     escape = -which(names(df) %in% c("Team", "Headshot")),
     options = opts,
     class = "compact stripe hover"
@@ -210,13 +272,19 @@ score_datatable <- function(df, score_cols, order_col = NULL) {
   # are single composite scores, not part of a same-category column group.
   boundary_cols <- category_boundary_cols(grep("^z_", score_cols, value = TRUE))
   if (length(boundary_cols) > 0) {
-    dt <- dt |> DT::formatStyle(boundary_cols, `border-left` = "3px solid #333333")
+    dt <- dt |>
+      DT::formatStyle(boundary_cols, `border-left` = "3px solid #333333")
   }
 
   for (col in score_cols) {
-    if (is_muted_col(col)) {
-      dt <- dt |> DT::formatStyle(col, backgroundColor = MUTED_GRAY,
-                                   color = MUTED_TEXT, fontWeight = "normal")
+    if (is_muted_col(col, mute_proj)) {
+      dt <- dt |>
+        DT::formatStyle(
+          col,
+          backgroundColor = MUTED_GRAY,
+          color = MUTED_TEXT,
+          fontWeight = "normal"
+        )
       next
     }
 
@@ -229,18 +297,30 @@ score_datatable <- function(df, score_cols, order_col = NULL) {
       high <- PADRES_GOLD
     } else {
       low <- LIGHT_GRAY
-      high <- brighten_color(CATEGORY_COLORS[[score_col_category(col)]] %||% PADRES_GOLD)
+      high <- brighten_color(
+        CATEGORY_COLORS[[score_col_category(col)]] %||% PADRES_GOLD
+      )
     }
 
-    dt <- dt |> DT::formatStyle(col, backgroundColor = zscore_style(df[[col]], low, high),
-                                 color = zscore_text_color(df[[col]], low, high),
-                                 fontWeight = "bold")
+    dt <- dt |>
+      DT::formatStyle(
+        col,
+        backgroundColor = zscore_style(df[[col]], low, high),
+        color = zscore_text_color(df[[col]], low, high),
+        fontWeight = "bold"
+      )
   }
   dt
 }
 
 # Matching text color (black/white) chosen for contrast against each shade.
-zscore_text_color <- function(x, low = LIGHT_GRAY, high = PADRES_GOLD, mid = NEUTRAL_MID, n = N_SHADES) {
+zscore_text_color <- function(
+  x,
+  low = LIGHT_GRAY,
+  high = PADRES_GOLD,
+  mid = NEUTRAL_MID,
+  n = N_SHADES
+) {
   # suppressWarnings: see scale_score()'s comment -- an all-NA column is an
   # anticipated case, handled by the is.finite() check right below.
   rng <- suppressWarnings(range(x, na.rm = TRUE))
