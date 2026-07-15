@@ -3,12 +3,36 @@
 # https://www.mlbstatic.com/team-logos/{id}.svg image URLs for the table.
 
 TEAM_LOGO_ID <- c(
-  ARI = "109", ATH = "133", ATL = "144", BAL = "110", BOS = "111",
-  CHC = "112", CHW = "145", CIN = "113", CLE = "114", COL = "115",
-  DET = "116", HOU = "117", KCR = "118", LAA = "108", LAD = "119",
-  MIA = "146", MIL = "158", MIN = "142", NYM = "121", NYY = "147",
-  PHI = "143", PIT = "134", SDP = "135", SEA = "136", SFG = "137",
-  STL = "138", TBR = "139", TEX = "140", TOR = "141", WSN = "120"
+  ARI = "109",
+  ATH = "133",
+  ATL = "144",
+  BAL = "110",
+  BOS = "111",
+  CHC = "112",
+  CHW = "145",
+  CIN = "113",
+  CLE = "114",
+  COL = "115",
+  DET = "116",
+  HOU = "117",
+  KCR = "118",
+  LAA = "108",
+  LAD = "119",
+  MIA = "146",
+  MIL = "158",
+  MIN = "142",
+  NYM = "121",
+  NYY = "147",
+  PHI = "143",
+  PIT = "134",
+  SDP = "135",
+  SEA = "136",
+  SFG = "137",
+  STL = "138",
+  TBR = "139",
+  TEX = "140",
+  TOR = "141",
+  WSN = "120"
 )
 
 # Renders team abbreviations as <img> logo tags; unknown abbreviations
@@ -18,8 +42,12 @@ team_logo_html <- function(abbrev) {
   ifelse(
     is.na(id),
     abbrev,
-    sprintf('<img src="https://www.mlbstatic.com/team-logos/%s.svg" height="24" alt="%s" title="%s">',
-            id, abbrev, abbrev)
+    sprintf(
+      '<img src="https://www.mlbstatic.com/team-logos/%s.svg" height="24" alt="%s" title="%s">',
+      id,
+      abbrev,
+      abbrev
+    )
   )
 }
 
@@ -29,7 +57,9 @@ player_headshot_html <- function(mlbam_id) {
   ifelse(
     is.na(mlbam_id),
     "",
-    sprintf('<img src="https://img.mlbstatic.com/mlb-photos/image/upload/w_60,q_100/v1/people/%s/headshot/67/current.png" height="40">',
-            mlbam_id)
+    sprintf(
+      '<img src="https://img.mlbstatic.com/mlb-photos/image/upload/w_60,q_100/v1/people/%s/headshot/67/current.png" height="40">&nbsp;&nbsp;',
+      mlbam_id
+    )
   )
 }

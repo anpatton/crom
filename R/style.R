@@ -6,7 +6,7 @@
 #   - CRON keeps the original Padres-inspired brown/white/gold.
 #   - Every other score column is colored by its stat category (see
 #     score_col_category()) so a category's whole column group (actual,
-#     x, Diff, Pct) shares one 70s-inspired hue -- CATEGORY_COLORS below.
+#     x, Diff) shares one 70s-inspired hue -- CATEGORY_COLORS below.
 
 PADRES_BROWN <- "#4A3226"
 PADRES_GOLD <- "#F2B705"
@@ -29,7 +29,7 @@ is_muted_col <- function(col, mute_proj = TRUE) {
 }
 
 # One 70s-inspired hue per category -- shared by every column in that
-# category's group (e.g. AB, xAB, ΔAB, Δ%AB all use the harvest gold
+# category's group (e.g. AB, xAB, ΔAB all use the harvest gold
 # gradient). Composite scores (CROM, xCROM, diffCROM) and the
 # supplemental sabermetric stats each get their own hue too; CRON is
 # handled separately in score_datatable() and isn't in this map.
@@ -74,6 +74,26 @@ brighten_color <- function(hex, amount = 0.18) {
   rgb <- grDevices::col2rgb(hex)[, 1]
   hsv <- grDevices::rgb2hsv(rgb[1], rgb[2], rgb[3])[, 1]
   grDevices::hsv(hsv["h"], min(1, hsv["s"] * 1.1), min(1, hsv["v"] + amount))
+}
+
+# Heatmap anchor colors (low/high, diverging through NEUTRAL_MID at 0) for a
+# score column: CRON keeps the Padres brown/gold; diffCROM diverges red (under)
+# to green (over); every other column is light gray -> its category's brightened
+# hue, falling back to harvest gold if unmapped. Single source of truth shared
+# by the table heatmap (score_datatable) and the glossary swatches.
+score_col_colors <- function(col) {
+  if (col == "CRON") {
+    c(low = PADRES_BROWN, high = PADRES_GOLD)
+  } else if (col == "diffCROM") {
+    c(low = "#D32F2F", high = "#2E7D32")
+  } else {
+    c(
+      low = LIGHT_GRAY,
+      high = brighten_color(
+        CATEGORY_COLORS[[score_col_category(col)]] %||% PADRES_GOLD
+      )
+    )
+  }
 }
 
 # Diverging low -> mid -> high color for a single value `v`, where `mid`
@@ -132,11 +152,11 @@ zscore_style <- function(
   DT::styleInterval(cuts, colors)
 }
 
-# Strips the z_ prefix and any _x/_Diff/_Pct suffix, leaving the shared
+# Strips the z_ prefix and any _x/_Diff suffix, leaving the shared
 # base category name (e.g. "z_AB_Diff" -> "AB"), used to detect where one
 # stat category's column group ends and the next begins.
 score_col_category <- function(col) {
-  col |> sub("^z_", "", x = _) |> sub("_x$|_Diff$|_Pct$", "", x = _)
+  col |> sub("^z_", "", x = _) |> sub("_x$|_Diff$", "", x = _)
 }
 
 # First column of each contiguous same-category run within `cols`, in
@@ -146,14 +166,66 @@ category_boundary_cols <- function(cols) {
   cols[c(TRUE, cats[-1] != cats[-length(cats)])]
 }
 
-# Header tooltips (native title attr) for the 4 composite score columns --
-# the first "real data" columns after the identity columns (Rank, Headshot,
-# Player, Team). Per-category z-score columns aren't tooltipped.
+# Definitions for the composite score columns, shown in the glossary rendered
+# under the table (see glossary_panel()). Keys are the raw column names; the
+# glossary pairs each with a color swatch from score_col_colors().
 COLUMN_TOOLTIPS <- c(
   CROM = "Based on stats that have actually occurred in games this season: sum of per-category z-scores, rescaled -5 (worst in pool) to +5 (best in pool).",
+  CRON = "How similar you are to Jake Cronenworth, rescaled -5 (least) to +5 (most).",
   xCROM = "Same as CROM, but computed from preseason projections (avg of Steamer/ZiPS/THE BAT) instead of actual in-game stats.",
-  xCROM_ROS = "Same as CROM, but computed from each system's rest-of-season projection (avg of Steamer/ZiPS/THE BAT ROS lines) instead of actual in-game stats."
+  xCROM_ROS = "Same as CROM, but computed from each system's rest-of-season projection (avg of Steamer/ZiPS/THE BAT ROS lines) instead of actual in-game stats.",
+  diffCROM = "How much actual performance differs from the preseason projection (CROM minus xCROM [Pre]); positive means outperforming, negative means underperforming."
 )
+
+# A static legend rendered under the table. Each entry pairs a composite
+# score's definition (COLUMN_TOOLTIPS) with a gradient swatch that mirrors its
+# heatmap (low -> white -> high via score_col_colors()), so the glossary
+# color-matches the table. Labels mirror the table's header text.
+glossary_panel <- function() {
+  entries <- list(
+    list(col = "CROM", label = "CROM"),
+    list(col = "CRON", label = "CRON"),
+    list(col = "xCROM", label = "xCROM [Pre]"),
+    list(col = "xCROM_ROS", label = "xCROM [ROS]"),
+    list(col = "diffCROM", label = "diffCROM")
+  )
+  rows <- lapply(entries, function(e) {
+    pair <- score_col_colors(e$col)
+    swatch <- sprintf(
+      "linear-gradient(to right, %s, %s, %s)",
+      pair[["low"]],
+      NEUTRAL_MID,
+      pair[["high"]]
+    )
+    htmltools::tags$div(
+      style = "display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px;",
+      htmltools::tags$span(
+        style = sprintf(
+          paste(
+            "flex: 0 0 auto; width: 46px; height: 22px; margin-top: 3px;",
+            "border: 1px solid #bbb; border-radius: 2px; background: %s;"
+          ),
+          swatch
+        )
+      ),
+      htmltools::tags$span(
+        htmltools::tags$strong(e$label),
+        " \u2014 ",
+        COLUMN_TOOLTIPS[[e$col]]
+      )
+    )
+  })
+  # Always-visible glossary rendered above the table.
+  htmltools::tags$div(
+    class = "crom-glossary",
+    style = "margin: 8px 0 16px; max-width: 860px; font-size: 14px; color: #444;",
+    htmltools::tags$h5(
+      "Glossary",
+      style = "font-size: 17px; font-weight: 600; margin-bottom: 10px;"
+    ),
+    rows
+  )
+}
 
 # Full category names for the top row of the grouped header (see
 # grouped_header_sketch()). Keys are the short category codes returned by
@@ -176,7 +248,7 @@ CATEGORY_FULL_NAMES <- c(
 )
 
 # Builds a 2-row <thead> for DT::datatable(container = ...): row 1 groups
-# each stat category's columns (AB/xAB/ΔAB/Δ%AB, ...) under one spanning
+# each stat category's columns (AB/xAB/ΔAB, ...) under one spanning
 # header showing its full name (CATEGORY_FULL_NAMES); columns that aren't
 # part of a multi-column category (Rank, Player, CROM, ...) just span
 # both rows with their existing short header, unchanged. `tooltips`, if
@@ -229,7 +301,7 @@ grouped_header_sketch <- function(cols, headers, tooltips = NULL) {
 # `score_cols` (rounded to 1 decimal) and "z_" stripped from headers, with
 # "_Diff" shown as the delta symbol (e.g. z_AB_Diff -> "ABΔ"). A bold
 # vertical rule marks the start of each stat category's column group.
-# Shared by the Players and Advanced Stats tabs so both style identically.
+# Used to style the Players table.
 score_datatable <- function(
   df,
   score_cols,
@@ -246,27 +318,103 @@ score_datatable <- function(
     opts$order <- list(list(which(names(df) == order_col) - 1, "desc"))
   }
 
+  # Render the Team column's abbreviation as a logo for display while keeping
+  # the raw abbreviation as the underlying value, so column sorting and the
+  # (optional) filter operate on "NYY" rather than an <img> HTML string.
+  if ("Team" %in% names(df)) {
+    logo_map <- jsonlite::toJSON(as.list(TEAM_LOGO_ID), auto_unbox = TRUE)
+    team_render <- DT::JS(sprintf(
+      "function(data, type, row) {
+         if (type !== 'display' || data == null) return data;
+         var m = %s, id = m[data];
+         if (!id) return data;
+         return '<img src=\"https://www.mlbstatic.com/team-logos/' + id +
+           '.svg\" height=\"24\" alt=\"' + data + '\" title=\"' + data + '\">';
+       }",
+      logo_map
+    ))
+    opts$columnDefs <- c(
+      opts$columnDefs,
+      list(list(targets = which(names(df) == "Team") - 1, render = team_render))
+    )
+  }
+
+  # The "IL" flag is data-only: hidden from view, it just drives the dark-red
+  # coloring of injured players' names (see formatStyle below).
+  if ("IL" %in% names(df)) {
+    opts$columnDefs <- c(
+      opts$columnDefs,
+      list(list(visible = FALSE, targets = which(names(df) == "IL") - 1))
+    )
+  }
+
+  # Every column gets a per-column filter box (filter = "top" below) except
+  # the Headshot image column: its cell holds an <img> tag that can't be
+  # meaningfully searched or sorted, so disable both there.
+  if ("Headshot" %in% names(df)) {
+    opts$columnDefs <- c(
+      opts$columnDefs,
+      list(list(
+        searchable = FALSE,
+        orderable = FALSE,
+        targets = which(names(df) == "Headshot") - 1
+      ))
+    )
+  }
+
   headers <- names(df) |>
     sub("^z_", "", x = _) |>
     sub("^(.*)_Diff$", "\u0394\\1", x = _) |>
     sub("^(.*)_x$", "x\\1", x = _) |>
-    sub("^(.*)_Pct$", "\u0394%\\1", x = _) |>
     sub("^xCROM_ROS$", "xCROM [ROS]", x = _) |>
-    sub("^xCROM$", "xCROM [Pre]", x = _)
+    sub("^xCROM$", "xCROM [Pre]", x = _) |>
+    sub("^Fantrax$", "Bly", x = _)
+
+  # Drop the "Headshot" label so the headshot reads as part of the adjacent
+  # Player column rather than its own titled column.
+  headers[names(df) == "Headshot"] <- ""
 
   dt <- DT::datatable(
     df,
     rownames = FALSE,
-    container = grouped_header_sketch(
-      names(df),
-      headers,
-      tooltips = COLUMN_TOOLTIPS
-    ),
-    escape = -which(names(df) %in% c("Team", "Headshot")),
+    filter = "top",
+    colnames = headers,
+    # Team is a plain abbreviation rendered to a logo client-side (see
+    # team_render), so its data is safe to escape; only the pre-built Headshot
+    # <img> HTML (when present) must skip escaping.
+    escape = if ("Headshot" %in% names(df)) {
+      -which(names(df) == "Headshot")
+    } else {
+      TRUE
+    },
     options = opts,
     class = "compact stripe hover"
   ) |>
     DT::formatRound(score_cols, 1)
+
+  # Left-justify the headshot image; every other column stays centered via the
+  # dt-center columnDef applied to all targets above.
+  if ("Headshot" %in% names(df)) {
+    dt <- dt |>
+      DT::formatStyle("Headshot", textAlign = "left")
+  }
+
+  # Slightly bold player names to set them apart from the numeric columns.
+  if ("Player" %in% names(df)) {
+    dt <- dt |>
+      DT::formatStyle("Player", fontWeight = 500)
+  }
+
+  # Color the name of injured-reserve players dark red, driven by the hidden
+  # "IL" flag column (see the visible = FALSE columnDef above).
+  if (all(c("Player", "IL") %in% names(df))) {
+    dt <- dt |>
+      DT::formatStyle(
+        "Player",
+        valueColumns = "IL",
+        color = DT::styleEqual("IL", "#8B0000", default = NULL)
+      )
+  }
 
   # Boundaries only among the z_* stat columns -- CROM/CRON/xCROM
   # are single composite scores, not part of a same-category column group.
@@ -288,19 +436,12 @@ score_datatable <- function(
       next
     }
 
-    # CRON keeps the original Padres brown/gold as its low/high anchors;
-    # every other column is light gray/its category's hue (CATEGORY_COLORS),
-    # falling back to harvest gold if a category is somehow unmapped. Both
-    # diverge through NEUTRAL_MID (white) at a score of 0.
-    if (col == "CRON") {
-      low <- PADRES_BROWN
-      high <- PADRES_GOLD
-    } else {
-      low <- LIGHT_GRAY
-      high <- brighten_color(
-        CATEGORY_COLORS[[score_col_category(col)]] %||% PADRES_GOLD
-      )
-    }
+    # Anchor colors come from score_col_colors() so the table heatmap and the
+    # glossary swatches stay in lockstep. All diverge through NEUTRAL_MID
+    # (white) at a score of 0.
+    pair <- score_col_colors(col)
+    low <- pair[["low"]]
+    high <- pair[["high"]]
 
     dt <- dt |>
       DT::formatStyle(
@@ -310,6 +451,25 @@ score_datatable <- function(
         fontWeight = "bold"
       )
   }
+
+  # DT emits a filter <input> for every column even when searchable = FALSE, so
+  # the image column would still show a dead search box. Blank just that one
+  # cell (matched positionally among the row's <td> cells) while leaving every
+  # other column's filter -- and the surrounding <tr> -- intact.
+  if ("Headshot" %in% names(df) && !is.null(dt$x$filterHTML)) {
+    k <- which(names(df) == "Headshot")
+    m <- gregexpr("(?s)<td\\b.*?</td>", dt$x$filterHTML, perl = TRUE)[[1]]
+    if (m[1] != -1 && length(m) == ncol(df)) {
+      st <- m[k]
+      en <- m[k] + attr(m, "match.length")[k] - 1
+      dt$x$filterHTML <- paste0(
+        substr(dt$x$filterHTML, 1, st - 1),
+        "<td></td>",
+        substr(dt$x$filterHTML, en + 1, nchar(dt$x$filterHTML))
+      )
+    }
+  }
+
   dt
 }
 

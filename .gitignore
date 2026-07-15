@@ -47,3 +47,10 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Data snapshots (produced by data_refresh.R)
+*.rds
+
+# Logs
+*.log
+logs/
