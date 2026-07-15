@@ -347,36 +347,55 @@ server <- function(input, output, session) {
     stats::setNames(df$Headshot, sprintf("%s (%s)", df$Player, df$Team))
   })
 
-  # Keep the two sides mutually exclusive: a player picked on one side is
-  # dropped from the other side's options, and selectize already blocks picking
-  # the same player twice within a side. Each observer preserves its own current
-  # selection on update, so the cross-refresh can't change an input's value and
-  # therefore can't loop.
-  observe({
-    avail <- all_choices()
-    avail <- avail[!(avail %in% as.integer(input$trade_b))]
+  # Populate both pickers with the FULL pool, and only re-send choices when the
+  # pool itself changes (player type / window). Choices are never rebuilt on a
+  # selection, so the server-side selectize widgets never re-render mid-pick --
+  # that constant choices churn was the source of the flicker/glitch.
+  observeEvent(all_choices(), {
     updateSelectizeInput(
       session,
       "trade_a",
-      choices = avail,
-      selected = input$trade_a,
+      choices = all_choices(),
+      selected = isolate(input$trade_a),
       server = TRUE
     )
-  })
-  observe({
-    avail <- all_choices()
-    avail <- avail[!(avail %in% as.integer(input$trade_a))]
     updateSelectizeInput(
       session,
       "trade_b",
-      choices = avail,
-      selected = input$trade_b,
+      choices = all_choices(),
+      selected = isolate(input$trade_b),
       server = TRUE
     )
   })
 
-  # Reset both sides at once. Clearing the selections lets the exclusivity
-  # observers above restore each picker's full option list.
+  # Enforce exclusivity by pruning the *selection*, not the choices: if a player
+  # is added to one side while already on the other, drop them from the other
+  # side's selected items (a lightweight value-only update, no re-render). This
+  # fires an update only on an actual overlap, so the common case does nothing
+  # and cannot flicker. Removing the overlap changes the other input, whose own
+  # observer then sees no overlap and stops -- so it also cannot loop.
+  observeEvent(input$trade_a, {
+    overlap <- intersect(input$trade_a, input$trade_b)
+    if (length(overlap) > 0) {
+      updateSelectizeInput(
+        session,
+        "trade_b",
+        selected = setdiff(input$trade_b, overlap)
+      )
+    }
+  })
+  observeEvent(input$trade_b, {
+    overlap <- intersect(input$trade_a, input$trade_b)
+    if (length(overlap) > 0) {
+      updateSelectizeInput(
+        session,
+        "trade_a",
+        selected = setdiff(input$trade_a, overlap)
+      )
+    }
+  })
+
+  # Reset both sides at once (selection-only update; choices are left intact).
   observeEvent(input$clear_trade, {
     updateSelectizeInput(session, "trade_a", selected = character(0))
     updateSelectizeInput(session, "trade_b", selected = character(0))
